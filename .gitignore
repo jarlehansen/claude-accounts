@@ -1,0 +1,5 @@
+# compiled binary
+claude-accounts
+
+# local Claude Code session config
+.claude/settings.local.json
