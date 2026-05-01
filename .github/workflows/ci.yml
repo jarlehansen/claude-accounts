@@ -32,4 +32,12 @@ jobs:
           fi
 
       - name: Test (with race detector)
-        run: go test -race ./...
+        run: |
+          go test -race -v ./... | tee test-output.log
+          pass=$(grep -c '^--- PASS:' test-output.log || true)
+          fail=$(grep -c '^--- FAIL:' test-output.log || true)
+          skip=$(grep -c '^--- SKIP:' test-output.log || true)
+          total=$((pass + fail + skip))
+          summary="Tests: $total total, $pass passed, $fail failed, $skip skipped"
+          echo "$summary"
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
