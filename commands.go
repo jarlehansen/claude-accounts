@@ -66,6 +66,12 @@ func cmdSwitch(name string) error {
 		return err
 	}
 
+	if merged, changed, err := mergeUserMcpServers(claudeJSON, prevClaudeJSON); err != nil {
+		return fmt.Errorf("merge user-scope MCP servers: %w", err)
+	} else if changed {
+		claudeJSON = merged
+	}
+
 	if err := keychainSet(keychainServiceClaude, token); err != nil {
 		return fmt.Errorf("write Claude credentials: %w", err)
 	}
@@ -171,6 +177,17 @@ func performLogin(store *Store, name string, subcommand string) error {
 	if newClaudeJSON == nil {
 		restoreSnapshot(existingToken, existingClaudeJSON)
 		return fmt.Errorf("no ~/.claude.json found after login — was login completed?")
+	}
+
+	if merged, changed, err := mergeUserMcpServers(newClaudeJSON, existingClaudeJSON); err != nil {
+		restoreSnapshot(existingToken, existingClaudeJSON)
+		return fmt.Errorf("merge user-scope MCP servers: %w", err)
+	} else if changed {
+		newClaudeJSON = merged
+		if err := writeClaudeJSON(newClaudeJSON); err != nil {
+			restoreSnapshot(existingToken, existingClaudeJSON)
+			return fmt.Errorf("write merged ~/.claude.json: %w", err)
+		}
 	}
 
 	if err := store.Save(name, newClaudeJSON, newToken); err != nil {

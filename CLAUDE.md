@@ -23,6 +23,8 @@ The tool swaps Claude Code's *identity* — and only that — between named prof
 
 Everything else under `~/.claude/` (projects, todos, history, plugins) is deliberately **not** swapped — it stays shared across profiles. If you find yourself wanting to touch other paths, push back: the contract is "switch the login, nothing else."
 
+One narrow exception inside `~/.claude.json`: the top-level `mcpServers` map (user-scope MCP servers) is propagated across profiles instead of being swapped. Without this, adding an MCP server under one profile would be invisible to the others, since Claude Code stores user-scope servers in the same file we replace. Local-scope servers (under `projects.<path>.mcpServers`) remain per-profile. See `mergeUserMcpServers` in `profile.go`.
+
 ## Storage layout
 
 ```

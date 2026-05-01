@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -276,4 +277,45 @@ func removeClaudeJSON() error {
 		return err
 	}
 	return nil
+}
+
+// mergeUserMcpServers copies the top-level "mcpServers" key from source into
+// target so user-scope MCP servers stay shared across all profiles. Local-
+// scope servers (under projects.<path>.mcpServers) are profile-specific and
+// untouched. Returns (target, false, nil) when neither side has the key or
+// both sides hold byte-identical values, so callers can skip a redundant
+// write.
+//
+// Top-level values are kept as json.RawMessage so numbers and escapes
+// round-trip verbatim. Re-marshaling alphabetizes keys; Claude Code rewrites
+// the file on every run, so order is cosmetic.
+func mergeUserMcpServers(target, source []byte) ([]byte, bool, error) {
+	var t map[string]json.RawMessage
+	if err := json.Unmarshal(target, &t); err != nil {
+		return nil, false, fmt.Errorf("parse target claude.json: %w", err)
+	}
+	var s map[string]json.RawMessage
+	if source != nil {
+		if err := json.Unmarshal(source, &s); err != nil {
+			return nil, false, fmt.Errorf("parse source claude.json: %w", err)
+		}
+	}
+	src, srcHas := s["mcpServers"]
+	tgt, tgtHas := t["mcpServers"]
+	if !srcHas && !tgtHas {
+		return target, false, nil
+	}
+	if srcHas && tgtHas && bytes.Equal(src, tgt) {
+		return target, false, nil
+	}
+	if srcHas {
+		t["mcpServers"] = src
+	} else {
+		delete(t, "mcpServers")
+	}
+	out, err := json.MarshalIndent(t, "", "  ")
+	if err != nil {
+		return nil, false, err
+	}
+	return out, true, nil
 }
