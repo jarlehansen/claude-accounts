@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 )
 
 func main() {
@@ -19,35 +20,32 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "create":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: claude-accounts create <name>")
-		}
-		if err := validateProfileName(args[1]); err != nil {
+		name, err := nameArg(args, "create")
+		if err != nil {
 			return err
 		}
-		return cmdCreate(args[1])
+		return cmdCreate(name)
 	case "list":
 		return cmdList()
 	case "current":
 		return cmdCurrent()
 	case "delete":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: claude-accounts delete <name>")
-		}
-		if err := validateProfileName(args[1]); err != nil {
+		name, err := nameArg(args, "delete")
+		if err != nil {
 			return err
 		}
-		return cmdDelete(args[1])
+		return cmdDelete(name)
 	case "reauth":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: claude-accounts reauth <name>")
-		}
-		if err := validateProfileName(args[1]); err != nil {
+		name, err := nameArg(args, "reauth")
+		if err != nil {
 			return err
 		}
-		return cmdReauth(args[1])
+		return cmdReauth(name)
 	case "help", "-h", "--help":
 		printHelp()
+		return nil
+	case "version", "-v", "--version":
+		fmt.Println("claude-accounts", versionString())
 		return nil
 	default:
 		if err := validateProfileName(args[0]); err != nil {
@@ -55,6 +53,16 @@ func run(args []string) error {
 		}
 		return cmdSwitch(args[0])
 	}
+}
+
+func nameArg(args []string, cmd string) (string, error) {
+	if len(args) < 2 {
+		return "", fmt.Errorf("usage: claude-accounts %s <name>", cmd)
+	}
+	if err := validateProfileName(args[1]); err != nil {
+		return "", err
+	}
+	return args[1], nil
 }
 
 func printHelp() {
@@ -67,5 +75,13 @@ Usage:
   claude-accounts list             list profiles
   claude-accounts current          print active profile
   claude-accounts delete <name>    delete a profile
-  claude-accounts reauth <name>    re-run login for an existing profile`)
+  claude-accounts reauth <name>    re-run login for an existing profile
+  claude-accounts version          print version`)
+}
+
+func versionString() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "(devel)"
 }

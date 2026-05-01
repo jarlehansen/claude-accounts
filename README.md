@@ -41,17 +41,18 @@ claude-accounts personal
 claude-accounts list             # list all profiles, with active one marked
 claude-accounts current          # print the active profile name
 claude-accounts delete <name>    # delete a profile and its stored credentials
+claude-accounts reauth <name>    # re-run login for an existing profile
 ```
 
 ### Re-authenticating a profile
 
-If a token expires or is revoked, switch to the profile and run `create` with the same name:
+If a token expires or is revoked, run `reauth`:
 
 ```sh
-claude-accounts create work
+claude-accounts reauth work
 ```
 
-Confirm the overwrite, then sign in again.
+This launches `claude` so you can sign in again under the existing profile name.
 
 ## How it works
 
@@ -73,6 +74,7 @@ claude-accounts create <name>    # create a new profile (launches claude for log
 claude-accounts list             # list profiles
 claude-accounts current          # print active profile
 claude-accounts delete <name>    # delete a profile
+claude-accounts reauth <name>    # re-run login for an existing profile
 ```
 
 When creating a profile, `claude-accounts` clears the current credentials, launches `claude` so you can log in, then captures and stores the new token. If anything fails, the previous credentials are restored.

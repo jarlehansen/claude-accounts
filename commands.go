@@ -60,13 +60,21 @@ func cmdSwitch(name string) error {
 	if err != nil {
 		return err
 	}
+
+	prevToken, prevClaudeJSON, err := captureLiveClaudeState()
+	if err != nil {
+		return err
+	}
+
 	if err := keychainSet(keychainServiceClaude, token); err != nil {
 		return fmt.Errorf("write Claude credentials: %w", err)
 	}
 	if err := writeClaudeJSON(claudeJSON); err != nil {
+		restoreSnapshot(prevToken, prevClaudeJSON)
 		return fmt.Errorf("write ~/.claude.json: %w", err)
 	}
 	if err := store.SetCurrent(name); err != nil {
+		restoreSnapshot(prevToken, prevClaudeJSON)
 		return err
 	}
 	fmt.Printf("switched to %s\n", name)
@@ -136,13 +144,9 @@ func cmdReauth(name string) error {
 // failure between wipe and save restores the snapshot — preserve this when
 // editing.
 func performLogin(store *Store, name string, subcommand string) error {
-	existingToken, err := keychainGet(keychainServiceClaude)
-	if err != nil && !errors.Is(err, errKeychainNotFound) {
-		return fmt.Errorf("read existing Claude credentials: %w", err)
-	}
-	existingClaudeJSON, err := readClaudeJSON()
+	existingToken, existingClaudeJSON, err := captureLiveClaudeState()
 	if err != nil {
-		return fmt.Errorf("read existing ~/.claude.json: %w", err)
+		return err
 	}
 
 	_ = keychainDelete(keychainServiceClaude)
@@ -190,11 +194,33 @@ func runClaudeInteractive() error {
 	return cmd.Run()
 }
 
+// captureLiveClaudeState reads the currently active Claude identity (Keychain
+// token + ~/.claude.json) so a later step can roll back to it on failure.
+// Either piece may legitimately be absent.
+func captureLiveClaudeState() (string, []byte, error) {
+	token, err := keychainGet(keychainServiceClaude)
+	if err != nil && !errors.Is(err, errKeychainNotFound) {
+		return "", nil, fmt.Errorf("read existing Claude credentials: %w", err)
+	}
+	claudeJSON, err := readClaudeJSON()
+	if err != nil {
+		return "", nil, fmt.Errorf("read existing ~/.claude.json: %w", err)
+	}
+	return token, claudeJSON, nil
+}
+
+// restoreSnapshot puts the live Claude identity back to a captured state.
+// Empty token / nil JSON mean "originally absent" — delete rather than skip,
+// otherwise we'd leave behind whatever was written in between.
 func restoreSnapshot(token string, claudeJSON []byte) {
 	if token != "" {
 		_ = keychainSet(keychainServiceClaude, token)
+	} else {
+		_ = keychainDelete(keychainServiceClaude)
 	}
 	if claudeJSON != nil {
 		_ = writeClaudeJSON(claudeJSON)
+	} else {
+		_ = removeClaudeJSON()
 	}
 }

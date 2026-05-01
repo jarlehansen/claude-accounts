@@ -99,14 +99,34 @@ func (s *Store) Exists(name string) bool {
 	return err == nil
 }
 
+// Save writes the per-profile keychain entry first, then atomically writes
+// the claude.json snapshot. If the disk write fails, the keychain entry is
+// rolled back to its previous value (or deleted if there was none) so a torn
+// save can't leave a profile pointing at the wrong token.
 func (s *Store) Save(name string, claudeJSON []byte, token string) error {
 	if err := os.MkdirAll(s.profileDir(name), 0o700); err != nil {
 		return err
 	}
-	if err := atomicWrite(s.profileClaudeJSON(name), claudeJSON, 0o600); err != nil {
+
+	service := keychainServicePrefix + name
+	prevToken, err := keychainGet(service)
+	hadPrev := err == nil
+	if err != nil && !errors.Is(err, errKeychainNotFound) {
 		return err
 	}
-	return keychainSet(keychainServicePrefix+name, token)
+
+	if err := keychainSet(service, token); err != nil {
+		return err
+	}
+	if err := atomicWrite(s.profileClaudeJSON(name), claudeJSON, 0o600); err != nil {
+		if hadPrev {
+			_ = keychainSet(service, prevToken)
+		} else {
+			_ = keychainDelete(service)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Load(name string) ([]byte, string, error) {
