@@ -203,7 +203,11 @@ func performLogin(store *Store, name string, subcommand string) error {
 	return nil
 }
 
-func runClaudeInteractive() error {
+// runClaudeInteractive is a var so tests can replace it with a fake that
+// simulates login success/failure without spawning the real Claude CLI.
+var runClaudeInteractive = realRunClaudeInteractive
+
+func realRunClaudeInteractive() error {
 	cmd := exec.Command("claude")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

@@ -286,6 +286,12 @@ func removeClaudeJSON() error {
 // both sides hold byte-identical values, so callers can skip a redundant
 // write.
 //
+// A nil source means "no prior live ~/.claude.json existed" — we have no
+// information about previous mcpServers state, so target is returned
+// unchanged. (An empty-but-present source, e.g. "{}", is different: it's
+// positive evidence that live had no mcpServers, and would propagate that
+// removal to target.)
+//
 // Top-level values are kept as json.RawMessage so numbers and escapes
 // round-trip verbatim. Re-marshaling alphabetizes keys; Claude Code rewrites
 // the file on every run, so order is cosmetic.
@@ -294,11 +300,12 @@ func mergeUserMcpServers(target, source []byte) ([]byte, bool, error) {
 	if err := json.Unmarshal(target, &t); err != nil {
 		return nil, false, fmt.Errorf("parse target claude.json: %w", err)
 	}
+	if source == nil {
+		return target, false, nil
+	}
 	var s map[string]json.RawMessage
-	if source != nil {
-		if err := json.Unmarshal(source, &s); err != nil {
-			return nil, false, fmt.Errorf("parse source claude.json: %w", err)
-		}
+	if err := json.Unmarshal(source, &s); err != nil {
+		return nil, false, fmt.Errorf("parse source claude.json: %w", err)
 	}
 	src, srcHas := s["mcpServers"]
 	tgt, tgtHas := t["mcpServers"]

@@ -7,12 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 go build -o claude-accounts .   # local binary
 go install .                    # install to GOBIN
+go test ./...                   # run unit tests
 go mod tidy                     # after dep changes
 ```
 
-No test suite yet.
+Tests use in-memory fakes for the keychain and `runClaudeInteractive`, plus a tempdir for `HOME`/`XDG_CONFIG_HOME`, so they don't touch the real macOS Keychain or spawn the real `claude` CLI. Helpers live in `testhelpers_test.go`. The TUI (`ui.go`) is not covered.
 
-macOS-only: depends on `/usr/bin/security` and an installed `claude` CLI on `PATH`.
+macOS-only at runtime: depends on `/usr/bin/security` and an installed `claude` CLI on `PATH`.
 
 ## What the tool does (and intentionally does not do)
 

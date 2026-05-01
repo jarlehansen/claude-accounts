@@ -25,9 +25,18 @@ func currentUsername() (string, error) {
 	return u.Username, nil
 }
 
-// keychainGet returns the password for service+current-user account, or
+// keychainGet, keychainSet, keychainDelete are vars (not direct funcs) so
+// tests can swap them for an in-memory backend without touching the real
+// macOS Keychain.
+var (
+	keychainGet    = realKeychainGet
+	keychainSet    = realKeychainSet
+	keychainDelete = realKeychainDelete
+)
+
+// realKeychainGet returns the password for service+current-user account, or
 // errKeychainNotFound if the entry does not exist.
-func keychainGet(service string) (string, error) {
+func realKeychainGet(service string) (string, error) {
 	username, err := currentUsername()
 	if err != nil {
 		return "", err
@@ -47,10 +56,10 @@ func keychainGet(service string) (string, error) {
 	return strings.TrimRight(stdout.String(), "\n"), nil
 }
 
-// keychainSet creates or updates an entry. Note: the password is passed as an
-// argv element to /usr/bin/security, so it is briefly visible in `ps` output.
-// Acceptable on a single-user dev machine; not a server-grade design.
-func keychainSet(service, password string) error {
+// realKeychainSet creates or updates an entry. Note: the password is passed
+// as an argv element to /usr/bin/security, so it is briefly visible in `ps`
+// output. Acceptable on a single-user dev machine; not a server-grade design.
+func realKeychainSet(service, password string) error {
 	username, err := currentUsername()
 	if err != nil {
 		return err
@@ -65,8 +74,8 @@ func keychainSet(service, password string) error {
 	return nil
 }
 
-// keychainDelete removes an entry. Missing is not an error.
-func keychainDelete(service string) error {
+// realKeychainDelete removes an entry. Missing is not an error.
+func realKeychainDelete(service string) error {
 	username, err := currentUsername()
 	if err != nil {
 		return err
