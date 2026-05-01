@@ -229,15 +229,31 @@ func captureLiveClaudeState() (string, []byte, error) {
 // restoreSnapshot puts the live Claude identity back to a captured state.
 // Empty token / nil JSON mean "originally absent" — delete rather than skip,
 // otherwise we'd leave behind whatever was written in between.
+//
+// Rollback failures are surfaced on stderr so the user knows the live state
+// is now inconsistent and needs manual repair (re-login or `claude /logout`).
+// Returning the error isn't useful — callers are already on a failure path
+// and would just discard it.
 func restoreSnapshot(token string, claudeJSON []byte) {
+	var tokenErr error
 	if token != "" {
-		_ = keychainSet(keychainServiceClaude, token)
+		tokenErr = keychainSet(keychainServiceClaude, token)
 	} else {
-		_ = keychainDelete(keychainServiceClaude)
+		tokenErr = keychainDelete(keychainServiceClaude)
 	}
+	if tokenErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to restore previous Claude credentials: %v\n", tokenErr)
+		fmt.Fprintln(os.Stderr, "         live keychain state may be inconsistent — run `claude /logout` and log in again to recover.")
+	}
+
+	var jsonErr error
 	if claudeJSON != nil {
-		_ = writeClaudeJSON(claudeJSON)
+		jsonErr = writeClaudeJSON(claudeJSON)
 	} else {
-		_ = removeClaudeJSON()
+		jsonErr = removeClaudeJSON()
+	}
+	if jsonErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to restore previous ~/.claude.json: %v\n", jsonErr)
+		fmt.Fprintln(os.Stderr, "         the Claude CLI may not start cleanly until this is resolved.")
 	}
 }
