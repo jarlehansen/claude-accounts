@@ -305,7 +305,50 @@ func TestStore_Email(t *testing.T) {
 	}
 }
 
+func TestAccountIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string // "" means nil input
+		want string
+	}{
+		{"uuid preferred over email", `{"oauthAccount":{"accountUuid":"u-1","emailAddress":"a@x.com"}}`, "u-1"},
+		{"falls back to email", `{"oauthAccount":{"emailAddress":"a@x.com"}}`, "a@x.com"},
+		{"empty oauthAccount", `{"oauthAccount":{}}`, ""},
+		{"no oauthAccount at all", `{"numStartups":3}`, ""},
+		{"malformed json", `{not json`, ""},
+		{"nil input", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var in []byte
+			if c.in != "" {
+				in = []byte(c.in)
+			}
+			if got := accountIdentity(in); got != c.want {
+				t.Errorf("accountIdentity = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestStore_Identity(t *testing.T) {
+	fakeHome(t)
+	fakeKeychain(t)
+	store, _ := NewStore()
+
+	if got := store.Identity("ghost"); got != "" {
+		t.Errorf("missing profile identity = %q, want \"\"", got)
+	}
+
+	_ = store.Save("alice", []byte(`{"oauthAccount":{"accountUuid":"u-alice"}}`), "tok")
+	if got := store.Identity("alice"); got != "u-alice" {
+		t.Errorf("identity = %q, want u-alice", got)
+	}
+}
+
 func TestStore_ReconcileCurrent(t *testing.T) {
+	const aliceJSON = `{"oauthAccount":{"accountUuid":"u-alice"}}`
+
 	t.Run("clears when profile missing", func(t *testing.T) {
 		fakeHome(t)
 		fakeKeychain(t)
@@ -320,37 +363,78 @@ func TestStore_ReconcileCurrent(t *testing.T) {
 		}
 	})
 
-	t.Run("clears when live token differs from stored", func(t *testing.T) {
+	// The regression that made the active-profile marker vanish overnight:
+	// Claude Code refreshes the token in place, so live != stored is the
+	// normal steady state and must not be read as drift.
+	t.Run("keeps when token was refreshed but identity matches", func(t *testing.T) {
 		fakeHome(t)
 		keychain := fakeKeychain(t)
 		store, _ := NewStore()
-		_ = store.Save("alice", []byte("{}"), "tok-alice-stored")
+		_ = store.Save("alice", []byte(aliceJSON), "tok-at-login")
 		_ = store.SetCurrent("alice")
-		keychain[keychainServiceClaude] = "different-live-token"
-
-		if err := store.ReconcileCurrent(); err != nil {
-			t.Fatal(err)
-		}
-		cur, _ := store.Current()
-		if cur != "" {
-			t.Errorf("current = %q, want \"\" after token mismatch", cur)
-		}
-	})
-
-	t.Run("keeps when live token matches stored", func(t *testing.T) {
-		fakeHome(t)
-		keychain := fakeKeychain(t)
-		store, _ := NewStore()
-		_ = store.Save("alice", []byte("{}"), "shared-token")
-		_ = store.SetCurrent("alice")
-		keychain[keychainServiceClaude] = "shared-token"
+		keychain[keychainServiceClaude] = "tok-refreshed"
+		_ = writeClaudeJSON([]byte(`{"oauthAccount":{"accountUuid":"u-alice"},"numStartups":9}`))
 
 		if err := store.ReconcileCurrent(); err != nil {
 			t.Fatal(err)
 		}
 		cur, _ := store.Current()
 		if cur != "alice" {
-			t.Errorf("current = %q, want alice (matching tokens)", cur)
+			t.Errorf("current = %q, want alice (a token refresh is not drift)", cur)
+		}
+	})
+
+	t.Run("clears when live identity differs from stored", func(t *testing.T) {
+		fakeHome(t)
+		keychain := fakeKeychain(t)
+		store, _ := NewStore()
+		_ = store.Save("alice", []byte(aliceJSON), "tok")
+		_ = store.SetCurrent("alice")
+		keychain[keychainServiceClaude] = "someone-elses-token"
+		_ = writeClaudeJSON([]byte(`{"oauthAccount":{"accountUuid":"u-stranger"}}`))
+
+		if err := store.ReconcileCurrent(); err != nil {
+			t.Fatal(err)
+		}
+		cur, _ := store.Current()
+		if cur != "" {
+			t.Errorf("current = %q, want \"\" after identity mismatch", cur)
+		}
+	})
+
+	t.Run("clears when live keychain entry is gone", func(t *testing.T) {
+		fakeHome(t)
+		fakeKeychain(t)
+		store, _ := NewStore()
+		_ = store.Save("alice", []byte(aliceJSON), "tok")
+		_ = store.SetCurrent("alice")
+		_ = writeClaudeJSON([]byte(aliceJSON))
+		// no keychainServiceClaude entry — user logged out
+
+		if err := store.ReconcileCurrent(); err != nil {
+			t.Fatal(err)
+		}
+		cur, _ := store.Current()
+		if cur != "" {
+			t.Errorf("current = %q, want \"\" with no live credentials", cur)
+		}
+	})
+
+	t.Run("clears when live claude.json has no account", func(t *testing.T) {
+		fakeHome(t)
+		keychain := fakeKeychain(t)
+		store, _ := NewStore()
+		_ = store.Save("alice", []byte(aliceJSON), "tok")
+		_ = store.SetCurrent("alice")
+		keychain[keychainServiceClaude] = "tok"
+		_ = writeClaudeJSON([]byte(`{"numStartups":1}`))
+
+		if err := store.ReconcileCurrent(); err != nil {
+			t.Fatal(err)
+		}
+		cur, _ := store.Current()
+		if cur != "" {
+			t.Errorf("current = %q, want \"\" when live is logged out", cur)
 		}
 	})
 }

@@ -65,6 +65,8 @@ Claude Code's identity is two pieces of state:
 
 Per-profile tokens are stored in the Keychain under `claude-accounts:<name>`, never on disk.
 
+Claude Code refreshes its OAuth token in place every few hours, so switching away from a profile first writes the current token back into it. Without that, the profile would keep the token it had at login time and you'd be asked to log in again the next day.
+
 ## Usage
 
 ```sh

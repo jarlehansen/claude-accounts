@@ -163,9 +163,46 @@ func (s *Store) Email(name string) string {
 	return j.OauthAccount.EmailAddress
 }
 
-// ReconcileCurrent clears the "current" pointer when reality has drifted:
-// the named profile was deleted, or the live Keychain token no longer
-// matches what we stored for it (e.g. user ran `claude /logout` directly).
+// accountIdentity returns a stable identifier for the account a claude.json
+// blob is logged in as: the oauthAccount UUID, falling back to the email
+// address for files that predate it. Returns "" when the blob is absent,
+// unparseable, or carries no oauthAccount at all (i.e. logged out). Callers
+// must treat "" as "unknown", never as a match.
+func accountIdentity(claudeJSON []byte) string {
+	var j struct {
+		OauthAccount struct {
+			AccountUUID  string `json:"accountUuid"`
+			EmailAddress string `json:"emailAddress"`
+		} `json:"oauthAccount"`
+	}
+	if err := json.Unmarshal(claudeJSON, &j); err != nil {
+		return ""
+	}
+	if j.OauthAccount.AccountUUID != "" {
+		return j.OauthAccount.AccountUUID
+	}
+	return j.OauthAccount.EmailAddress
+}
+
+// Identity returns the account identifier recorded in the profile's snapshot,
+// or "" if it can't be read or parsed. Like Email, never an error.
+func (s *Store) Identity(name string) string {
+	data, err := os.ReadFile(s.profileClaudeJSON(name))
+	if err != nil {
+		return ""
+	}
+	return accountIdentity(data)
+}
+
+// ReconcileCurrent clears the "current" pointer when reality has drifted: the
+// named profile was deleted, the live Keychain entry is gone, or the live
+// ~/.claude.json is logged in as a different account than the profile's
+// snapshot (e.g. the user ran `claude /logout` and logged in directly).
+//
+// Drift is judged on account identity, not raw token bytes. Claude Code
+// refreshes the OAuth token in place, so the live token legitimately differs
+// from the stored one most of the time; comparing bytes read every routine
+// refresh as a logout and dropped the active-profile marker.
 func (s *Store) ReconcileCurrent() error {
 	current, err := s.Current()
 	if err != nil || current == "" {
@@ -174,15 +211,18 @@ func (s *Store) ReconcileCurrent() error {
 	if !s.Exists(current) {
 		return s.SetCurrent("")
 	}
-	live, err := keychainGet(keychainServiceClaude)
-	if err != nil && !errors.Is(err, errKeychainNotFound) {
+	if _, err := keychainGet(keychainServiceClaude); err != nil {
+		if errors.Is(err, errKeychainNotFound) {
+			return s.SetCurrent("")
+		}
 		return err
 	}
-	stored, err := keychainGet(keychainServicePrefix + current)
-	if err != nil && !errors.Is(err, errKeychainNotFound) {
+	liveJSON, err := readClaudeJSON()
+	if err != nil {
 		return err
 	}
-	if live != stored {
+	live := accountIdentity(liveJSON)
+	if live == "" || live != s.Identity(current) {
 		return s.SetCurrent("")
 	}
 	return nil

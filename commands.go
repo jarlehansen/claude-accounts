@@ -56,12 +56,20 @@ func cmdSwitch(name string) error {
 	if !store.Exists(name) {
 		return fmt.Errorf("profile %q does not exist; run `claude-accounts create %s` first", name, name)
 	}
-	claudeJSON, token, err := store.Load(name)
+
+	prevToken, prevClaudeJSON, err := captureLiveClaudeState()
 	if err != nil {
 		return err
 	}
+	// Fold a token Claude Code refreshed in place back into the outgoing
+	// profile before we overwrite it. Must run before store.Load so that
+	// switching to the already-active profile reloads what was just written
+	// back instead of an older snapshot.
+	if err := syncActiveProfile(store, prevToken, prevClaudeJSON); err != nil {
+		return err
+	}
 
-	prevToken, prevClaudeJSON, err := captureLiveClaudeState()
+	claudeJSON, token, err := store.Load(name)
 	if err != nil {
 		return err
 	}
@@ -154,6 +162,11 @@ func performLogin(store *Store, name string, subcommand string) error {
 	if err != nil {
 		return err
 	}
+	// Fold a refreshed live token back into the outgoing profile before the
+	// wipe below discards it.
+	if err := syncActiveProfile(store, existingToken, existingClaudeJSON); err != nil {
+		return err
+	}
 
 	_ = keychainDelete(keychainServiceClaude)
 	_ = removeClaudeJSON()
@@ -213,6 +226,39 @@ func realRunClaudeInteractive() error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// syncActiveProfile persists the live Claude identity back into the currently
+// active profile before a caller overwrites it. Claude Code refreshes its
+// OAuth token in place, rewriting the live Keychain entry every few hours, so
+// the copy taken at create/reauth time goes stale quickly: without this,
+// switching away discarded the refreshed token and switching back restored a
+// dead one, forcing a re-login.
+//
+// The write-back is skipped unless the live ~/.claude.json still names the
+// same account as the profile's snapshot. If the user ran `claude /logout` and
+// logged in as somebody else directly, the live token isn't this profile's and
+// saving it would clobber the profile.
+//
+// Callers must invoke this *before* mutating live state and abort on error,
+// which keeps the "every error path after the wipe calls restoreSnapshot"
+// invariant intact.
+func syncActiveProfile(store *Store, liveToken string, liveClaudeJSON []byte) error {
+	current, err := store.Current()
+	if err != nil || current == "" {
+		return err
+	}
+	if liveToken == "" || liveClaudeJSON == nil || !store.Exists(current) {
+		return nil
+	}
+	identity := accountIdentity(liveClaudeJSON)
+	if identity == "" || identity != store.Identity(current) {
+		return nil
+	}
+	if err := store.Save(current, liveClaudeJSON, liveToken); err != nil {
+		return fmt.Errorf("save refreshed credentials for active profile %q: %w", current, err)
+	}
+	return nil
 }
 
 // captureLiveClaudeState reads the currently active Claude identity (Keychain

@@ -281,6 +281,141 @@ func TestCmdSwitch_PropagatesMcpServers(t *testing.T) {
 	}
 }
 
+// seedTwoProfiles sets up alice (active, with a token Claude Code has since
+// refreshed in place) and bob (idle). Returns the store.
+func seedTwoProfiles(t *testing.T, keychain map[string]string) *Store {
+	t.Helper()
+	store, err := NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("alice", []byte(`{"oauthAccount":{"accountUuid":"u-alice"}}`), "alice-token-at-login"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("bob", []byte(`{"oauthAccount":{"accountUuid":"u-bob"}}`), "bob-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetCurrent("alice"); err != nil {
+		t.Fatal(err)
+	}
+	keychain[keychainServiceClaude] = "alice-token-refreshed"
+	if err := writeClaudeJSON([]byte(`{"oauthAccount":{"accountUuid":"u-alice"},"numStartups":42}`)); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func TestCmdSwitch_WritesRefreshedTokenBackToOutgoingProfile(t *testing.T) {
+	fakeHome(t)
+	swallowStdout(t)
+	keychain := fakeKeychain(t)
+	store := seedTwoProfiles(t, keychain)
+
+	if err := cmdSwitch("bob"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := keychain[keychainServicePrefix+"alice"]; got != "alice-token-refreshed" {
+		t.Errorf("alice's stored token = %q, want alice-token-refreshed", got)
+	}
+	saved, _, err := store.Load("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(saved, []byte("numStartups")) {
+		t.Errorf("alice's snapshot not updated from live: %s", saved)
+	}
+}
+
+// The regression this whole mechanism exists for: switch away and back, and
+// you land on the token Claude Code last refreshed — not the dead one captured
+// when the profile was created.
+func TestCmdSwitch_RoundTripPreservesRefreshedToken(t *testing.T) {
+	fakeHome(t)
+	swallowStdout(t)
+	keychain := fakeKeychain(t)
+	seedTwoProfiles(t, keychain)
+
+	if err := cmdSwitch("bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdSwitch("alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := keychain[keychainServiceClaude]; got != "alice-token-refreshed" {
+		t.Errorf("live token after round trip = %q, want alice-token-refreshed", got)
+	}
+	live, _ := readClaudeJSON()
+	if !bytes.Contains(live, []byte("numStartups")) {
+		t.Errorf("live ~/.claude.json rolled back to a stale snapshot: %s", live)
+	}
+}
+
+func TestCmdSwitch_ToActiveProfileKeepsRefreshedToken(t *testing.T) {
+	fakeHome(t)
+	swallowStdout(t)
+	keychain := fakeKeychain(t)
+	seedTwoProfiles(t, keychain)
+
+	// `claude-accounts alice` while alice is already active must not restore
+	// the stale snapshot over the live refreshed credentials.
+	if err := cmdSwitch("alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := keychain[keychainServiceClaude]; got != "alice-token-refreshed" {
+		t.Errorf("live token = %q, want alice-token-refreshed", got)
+	}
+	if got := keychain[keychainServicePrefix+"alice"]; got != "alice-token-refreshed" {
+		t.Errorf("stored token = %q, want alice-token-refreshed", got)
+	}
+}
+
+func TestCmdSwitch_SkipsWriteBackWhenLiveIdentityDiffers(t *testing.T) {
+	fakeHome(t)
+	swallowStdout(t)
+	keychain := fakeKeychain(t)
+	store := seedTwoProfiles(t, keychain)
+
+	// The user ran `claude /logout` and logged in as somebody else outside the
+	// tool: the live token isn't alice's and must not overwrite her profile.
+	keychain[keychainServiceClaude] = "stranger-token"
+	_ = writeClaudeJSON([]byte(`{"oauthAccount":{"accountUuid":"u-stranger"}}`))
+
+	if err := cmdSwitch("bob"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := keychain[keychainServicePrefix+"alice"]; got != "alice-token-at-login" {
+		t.Errorf("alice's stored token = %q, want alice-token-at-login (untouched)", got)
+	}
+	saved, _, _ := store.Load("alice")
+	if bytes.Contains(saved, []byte("u-stranger")) {
+		t.Errorf("alice's snapshot clobbered by another account: %s", saved)
+	}
+}
+
+func TestPerformLogin_WritesRefreshedTokenBackToOutgoingProfile(t *testing.T) {
+	fakeHome(t)
+	swallowStdout(t)
+	keychain := fakeKeychain(t)
+	store := seedTwoProfiles(t, keychain)
+
+	newJSON := []byte(`{"oauthAccount":{"accountUuid":"u-carol"}}`)
+	fakeClaudeRun(t, simulateLogin(keychain, "carol-token", newJSON))
+
+	// Creating a third profile wipes live state — alice's refreshed token must
+	// be captured before that happens.
+	if err := performLogin(store, "carol", "create"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := keychain[keychainServicePrefix+"alice"]; got != "alice-token-refreshed" {
+		t.Errorf("alice's stored token = %q, want alice-token-refreshed", got)
+	}
+}
+
 func TestCmdSwitch_UnknownProfileFails(t *testing.T) {
 	fakeHome(t)
 	fakeKeychain(t)
