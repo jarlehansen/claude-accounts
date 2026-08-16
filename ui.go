@@ -145,7 +145,10 @@ func runMenu() error {
 }
 
 func runListMenu() (bool, error) {
-	choice, current, err := pickProfile(profilePickerOpts{title: "switch profile"})
+	choice, current, err := pickProfile(profilePickerOpts{
+		title:            "switch profile",
+		startOnNonActive: true,
+	})
 	if err != nil || choice == "" {
 		return false, err
 	}
@@ -164,6 +167,20 @@ type profilePickerOpts struct {
 	description  string // defaults to "esc to go back"
 	activeSuffix string // shown after active profile's label; defaults to "(active)"
 	emptyMessage string // printed when there are no profiles; has a default
+	// startOnNonActive puts the cursor on the first profile that isn't the
+	// active one, so switching between two profiles is a single enter press.
+	startOnNonActive bool
+}
+
+// firstNonActive returns the first name that isn't the active profile, or ""
+// if there is no such name (empty list, or every entry is the active one).
+func firstNonActive(names []string, current string) string {
+	for _, n := range names {
+		if n != current {
+			return n
+		}
+	}
+	return ""
 }
 
 // pickProfile shows a picker of existing profiles and returns the chosen
@@ -207,6 +224,12 @@ func pickProfile(opts profilePickerOpts) (choice, current string, err error) {
 		options = append(options, huh.NewOption(label, n))
 	}
 	options = append(options, huh.NewOption("← back", "__back"))
+
+	// huh's Select seeds its cursor from the bound value, so setting `choice`
+	// before Value() below is what moves the initial highlight.
+	if opts.startOnNonActive {
+		choice = firstNonActive(names, current)
+	}
 
 	err = runField(
 		huh.NewSelect[string]().
